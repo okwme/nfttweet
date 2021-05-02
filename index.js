@@ -12,8 +12,10 @@ const {
   ETHERSCAN_ABI_URL,
   ETHERSCAN_API_KEY,
   CONTRACT_ADDRESS,
+  GENESIS_BLOCK,
   CONTRACT_EVENTS } = process.env
 
+const axios = require('axios')
 const CONTRACT_EVENTS_ARRAY = CONTRACT_EVENTS.split(',')
 const Web3 = require('web3')
 const Twitter = require('twitter')
@@ -26,11 +28,23 @@ const twitterClient = new Twitter({
   access_token_secret: TWITTER_ACCESS_TOKEN_SECRET
 })
 
-function postToTwitter(event) {
-  const msg = eval('`'+ TWITTER_MESSAGE_TEMPLATE + '`')
+async function postToTwitter({from, to, tokenID, totalSupply}) {
+
+  console.log({from, to, tokenID, totalSupply})
+  const metadata = await axios.get(`https://virus.folia.app/metadata/${tokenID}`)
+  console.log({metadata})
+
+  // need to upload an image here. simple link doesn't show.
+
+  const msg = `${metadata.data.name} — ${metadata.data.description} ${metadata.data.image}`
+  // TWITTER_MESSAGE_TEMPLATE="${event.event} event heard at transaction hash ${event.transactionHash}, Block number: ${event.blockNumber}"
+  // const msg = eval('`'+ TWITTER_MESSAGE_TEMPLATE + '`')
+  // const msg = event.toString()
   return twitterClient.post('statuses/update', {status: msg},  function(error, tweet, response) {
-      if (error) return console.log(JSON.stringify(error))
+      console.log({error, tweet, response})
+      if (error) return console.error(JSON.stringify(error))
   });
+  
 }
 
 async function getContractAbi() {
@@ -43,12 +57,41 @@ async function getContractAbi() {
 async function eventQuery(){
 	const contract_abi = await getContractAbi()
   const contract = new web3.eth.Contract(contract_abi, CONTRACT_ADDRESS)
+
+
+  contract.getPastEvents('Infect', {
+    fromBlock: GENESIS_BLOCK
+  }).then(async events => {
+    console.log(`there are ${events.length} events`)
+    for (var i = 0; i < events.length; i++) {
+      var event = events[i]
+
+      if (event.event == "Infect") {
+        // totalSupply = await contract.methods.totalSupply().call()
+        // console.log({totalSupply})
+        postToTwitter({
+          from: event.returnValues.from,
+          to: event.returnValues.to,
+          tokenID: event.returnValues.tokenId,
+          // totalSupply: i + 1
+        })
+      }
+    }
+
+  })
+
   let lastHash
 	contract.events.allEvents()
-		.on('data', (event) => {
-      if (CONTRACT_EVENTS_ARRAY.includes(event.event) && event.transactionHash !== lastHash) {
+		.on('data', async (event) => {
+      if (event.event == "Infect" && event.transactionHash !== lastHash) {
         lastHash = event.transactionHash // dedupe
-        postToTwitter(event)
+        // totalSupply = await contract.methods.totalSupply().call(undefined, event.blockNumber)
+        postToTwitter({
+          from: event.returnValues.from,
+          to: event.returnValues.to,
+          tokenID: event.returnValues.tokenId,
+          // totalSupply
+        })
       }
 		})
 		.on('error', console.error)
