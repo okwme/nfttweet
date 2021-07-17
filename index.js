@@ -19,8 +19,9 @@ const axios = require('axios')
 const CONTRACT_EVENTS_ARRAY = CONTRACT_EVENTS.split(',')
 const Web3 = require('web3')
 const Twitter = require('twitter')
-const restClient = require('node-rest-client-promise').Client();
+const restClient = require('node-rest-client-promise').Client()
 const web3 = new Web3(new Web3.providers.WebsocketProvider(WSURL))
+
 const twitterClient = new Twitter({
   consumer_key: TWITTER_API_KEY,
   consumer_secret: TWITTER_API_SECRET_KEY,
@@ -34,17 +35,36 @@ async function postToTwitter({from, to, tokenID, totalSupply}) {
   const metadata = await axios.get(`https://virus.folia.app/metadata/${tokenID}`)
   console.log({metadata})
 
-  // need to upload an image here. simple link doesn't show.
+  // get image binary data
+  const result = await axios.request({
+    responseType: 'arraybuffer',
+    url: metadata.data.image,
+    method: 'get',
+    headers: {
+      'Content-Type': 'image/jpeg', // if the image type changes this too
+    },
+  })
+  let base64 = Buffer.from(result.data, 'binary').toString('base64')
+  // base64 = `data:image/jpeg;base64,` +  base64
+  // console.log(base64)
 
-  const msg = `${metadata.data.name} — ${metadata.data.description} ${metadata.data.image}`
+  console.log({result})
+
+  const data = result.data
+  const uploadResult = await twitterClient.post('media/upload', { media: data})
+  const media_id = uploadResult.media_id
+
+  const msg = `${metadata.data.name} — ${metadata.data.description}`
+
+  let opts = { status: msg, media_ids: media_id }
+
   // TWITTER_MESSAGE_TEMPLATE="${event.event} event heard at transaction hash ${event.transactionHash}, Block number: ${event.blockNumber}"
   // const msg = eval('`'+ TWITTER_MESSAGE_TEMPLATE + '`')
   // const msg = event.toString()
-  return twitterClient.post('statuses/update', {status: msg},  function(error, tweet, response) {
-      console.log({error, tweet, response})
+  return twitterClient.post('statuses/update', opts,  function(error, tweet, response) {
+      console.log({error, tweet: tweet.errors, response})
       if (error) return console.error(JSON.stringify(error))
   });
-  
 }
 
 async function getContractAbi() {
@@ -69,12 +89,13 @@ async function eventQuery(){
       if (event.event == "Infect") {
         // totalSupply = await contract.methods.totalSupply().call()
         // console.log({totalSupply})
-        postToTwitter({
+        await postToTwitter({
           from: event.returnValues.from,
           to: event.returnValues.to,
           tokenID: event.returnValues.tokenId,
           // totalSupply: i + 1
         })
+        break
       }
     }
 
@@ -86,7 +107,7 @@ async function eventQuery(){
       if (event.event == "Infect" && event.transactionHash !== lastHash) {
         lastHash = event.transactionHash // dedupe
         // totalSupply = await contract.methods.totalSupply().call(undefined, event.blockNumber)
-        postToTwitter({
+        await postToTwitter({
           from: event.returnValues.from,
           to: event.returnValues.to,
           tokenID: event.returnValues.tokenId,
